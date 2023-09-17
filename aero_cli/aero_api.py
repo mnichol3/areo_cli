@@ -16,9 +16,16 @@ class AeroAPI(object):
 
     DTG_FMT = '%Y-%m-%dT%H:%M:%S'
 
-    def __init__(self, **kwargs):
-        self._api_key = kwargs.get('api_key', os.environ['AEROAPI_KEY'])
+    def __init__(self, api_key=None):
+        if api_key is None:
+            if 'AEROAPI_KEY' not in os.environ:
+                raise ValueError('User must provide FlightAware Aero API key.')
+            else:
+                api_key = os.environ['AEROAPI_KEY']
+
+        self._api_key = api_key
         self._api_url = 'https://aeroapi.flightaware.com/aeroapi'
+
         self._session = requests.Session()
         self._session.headers.update({"x-apikey": self._api_key})
         self._payload = None
@@ -27,49 +34,75 @@ class AeroAPI(object):
     def get_arrivals(
             self,
             icao: str,
-            **kwargs: str
+            **kwargs: typing.Dict[str, str]
     ) -> pd.DataFrame:
         url = self._get_airport_request_url('arrivals', icao, **kwargs)
+        print(url)
         payload, cursor = self._make_request(url)
+
+        self._payload = payload
+        self._cursor = cursor
+
+        return payload, cursor
 
     def get_scheduled_arrivals(
             self,
             icao: str,
-            **kwargs: str
+            **kwargs: typing.Dict[str, str]
     ) -> pd.DataFrame:
         url = self._get_airport_request_url('scheduled_arrivals', icao, **kwargs)
         payload, cursor = self._make_request(url)
 
+        self._cursor = cursor
+        self._payload = payload
+
+        return payload, cursor
+
     def get_departures(
             self,
             icao: str,
-            **kwargs: str
+            **kwargs: typing.Dict[str, str]
     ) -> pd.DataFrame:
         url = self._get_airport_request_url('departures', icao, **kwargs)
         payload, cursor = self._make_request(url)
 
+        self._payload = payload
+        self._cursor = cursor
+
+        return payload, cursor
+
     def get_scheduled_departures(
             self,
             icao: str,
-            **kwargs: str
+            **kwargs: typing.Dict[str, str]
     ) -> pd.DataFrame:
         url = self._get_airport_request_url('scheduled_departures', icao, **kwargs)
         payload, cursor = self._make_request(url)
+
+        self._payload = payload
+        self._cursor = cursor
+
+        return payload, cursor
 
     def get_flights_between(
             self,
             origin: str,
             dest: str,
-            **kwargs: str
+            **kwargs: typing.Dict[str, str]
     ) -> pd.DataFrame:
         url = self._get_airport_request_url('flights_to', origin, dest=dest)
         payload, cursor = self._make_request(url)
+
+        self._payload = payload
+        self._cursor = cursor
+
+        return payload, cursor
 
     def _get_airport_request_url(
             self,
             req_type: str,
             icao: str,
-            **kwargs: str
+            **kwargs: typing.Dict[str, str]
     ) -> str:
         """
         Construct the URL for an airport-based request, e.g. KLAX arrivals.
@@ -96,6 +129,8 @@ class AeroAPI(object):
                 raise ValueError('"dest" parameter must be given for "flights_to" request.')
             else:
                 req_str += f'to/{kwargs.get("dest")}'
+        else:
+            req_str += req_type
 
         return req_str
 
@@ -103,7 +138,7 @@ class AeroAPI(object):
             self,
             req_url: str,
             return_json: bool = False,
-            **kwargs: str
+            **kwargs: typing.Dict[str, str]
     ) -> tuple[typing.Dict[str, str] | pd.DataFrame, str]:
         """
         Make a request to the FlightAware AeroAPI.
@@ -213,24 +248,40 @@ class AeroAPI(object):
         sched_df = pd.DataFrame(df_list, columns=col_names)
 
         # Convert datetime strings to datetime objects
-        for (col_name, col_val) in sched_df.iteritems():
-            if col_name.split('_')[1] in ['out', 'off', 'on', 'in']:
+        for (col_name, col_val) in sched_df.items():
+            if any([x in col_name for x in ['sched_', 'est_', 'act_']]):
                 sched_df[col_name] = pd.to_datetime(col_val, format=self.DTG_FMT,
                                                     errors='coerce')
+
         return sched_df
 
     @staticmethod
-    def concat_df_from_obj(obj, df_var, new_df, set_attr=True) -> pd.DataFrame:
-        curr_df = getattr(obj, df_var)
-        if curr_df is None:
-            curr_df = new_df
-        else:
-            curr_df = pd.concat([curr_df, new_df], ignore_index=True)
+    def seconds_to_hours_mins(sec: int) -> str:
+        """
+        Convert seconds to hours:minutes.
 
-        if set_attr:
-            setattr(obj, df_var, curr_df)
+        Parameters
+        ----------
+        sec : int
+            Seconds.
 
-        return curr_df
+        Returns
+        -------
+        str
+        """
+        sec = int(sec)
+
+        neg = sec < 0
+
+        td = str(timedelta(seconds=abs(sec)))
+        t_arr = td.split(':')
+
+        hr_min = f'{t_arr[0].zfill(2)}:{t_arr[1].zfill(2)}'
+
+        if neg:
+            hr_min = '-' + hr_min
+
+        return hr_min 
 
     @staticmethod
     def print_df(df: pd.DataFrame, actual_times: bool = False) -> None:
@@ -273,3 +324,12 @@ class AeroAPI(object):
     @property
     def api_url(self) -> str:
         return self._api_url
+
+    @property
+    def payload(self) -> pd.DataFrame:
+        return self._payload
+
+    @property
+    def cursor(self) -> str:
+        return self._cursor
+
